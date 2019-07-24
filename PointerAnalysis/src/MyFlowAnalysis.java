@@ -166,6 +166,97 @@ class MyForwardFlow extends ForwardFlowAnalysis
 				//System.out.println((((DefinitionStmt) u).getLeftOp().toString()));
 			}
 			// TODO: 如果rightOP不是local而是InstanceFieldRef等，则需要考虑域敏感分析
+			if (leftOp instanceof InstanceFieldRef || rightOp instanceof InstanceFieldRef || leftOp instanceof ArrayRef || rightOp instanceof ArrayRef){
+				
+				//System.out.println("DEBUG: InstanceFieldRef/ArrayRef called");
+				//System.out.println(((DefinitionStmt) u).getRightOp().toString());
+				//System.out.println((((DefinitionStmt) u).getLeftOp().toString()));
+
+				Set<ObjectInfo> rightSet = new HashSet<ObjectInfo>();
+
+				if (rightOp instanceof InstanceFieldRef){
+					InstanceFieldRef fr = (InstanceFieldRef) rightOp;
+					String baseName = ((Local) fr.getBase()).getName();
+					String fieldName = fr.getField().getName();
+
+					// 鉴于对NewExpr的处理，这里先获得右值在当前域的对象信息，再以其更新左值的PointToSet
+					ObjectInfo rightObj = new ObjectInfo(0, baseName, "default", "main");
+					Set<ObjectInfo> basePointsTo = in.getKey(rightObj);
+
+					for (ObjectInfo pto : basePointsTo) {
+						ObjectInfo k = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
+						rightSet.add(k);
+					}
+				} else if (rightOp instanceof ArrayRef) {
+					System.out.println("DEBUG: ArrayRef called");
+
+					ArrayRef arr = (ArrayRef) rightOp;
+					String baseName = ((Local) arr.getBase()).getName();
+					String fieldName = "_";
+					if (arr.getIndex() instanceof IntConstant) {
+						fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
+					}
+
+					ObjectInfo rightObj = new ObjectInfo(0, baseName, "default", "main");
+					Set<ObjectInfo> basePointsTo = in.getKey(rightObj);
+
+					for (ObjectInfo pto: basePointsTo) {
+						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName());
+						rightSet.add(k1);
+						if (!fieldName.equals("_")) {
+							//固定位置
+							ObjectInfo k2 = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
+							rightSet.add(k2);
+						}
+					}
+				} else {
+					ObjectInfo rightObj = new ObjectInfo(0, rightOp.toString(), "default", "main");
+					Set<ObjectInfo>tmpSet = out.getKey(rightObj);
+					rightSet = PointToSet.deepCloneSet(tmpSet);
+				}
+
+				if (leftOp instanceof InstanceFieldRef){
+					InstanceFieldRef fr = (InstanceFieldRef) leftOp;
+					String baseName = ((Local) fr.getBase()).getName();
+					String fieldName = fr.getField().getName();
+
+					ObjectInfo leftIFObj = new ObjectInfo(0, baseName, "default", "main");
+					Set<ObjectInfo> basePointsTo = in.getKey(leftIFObj);
+
+					for (ObjectInfo pto : basePointsTo) {
+						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
+						ObjectInfo k2 = new ObjectInfo(0, baseName, "default", "main");
+						out.append(k1, rightSet);
+						out.append(k2, rightSet);
+					}
+				} else if (leftOp instanceof ArrayRef) {
+					ArrayRef arr = (ArrayRef) leftOp;
+					String baseName = ((Local) arr.getBase()).getName();
+					String fieldName = "_";
+					if (arr.getIndex() instanceof IntConstant) {
+						fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
+					}
+
+					ObjectInfo leftIFObj = new ObjectInfo(0, baseName, "default", "main");
+					Set<ObjectInfo> basePointsTo = in.getKey(leftIFObj);
+
+					for (ObjectInfo pto: basePointsTo) {
+						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName());
+						if (!fieldName.equals("_") && basePointsTo.size() == 1) {
+							out.insert(k1, rightSet);
+						} else {
+							out.append(k1, rightSet);
+						}
+
+						ObjectInfo k2 = new ObjectInfo(0, baseName, fieldName, "main");
+						out.append(k2, rightSet);
+					}
+				} else {
+					out.insert(leftObj, rightSet);
+				}
+			}
+
+			// TBD: 处理ThisRef, NullConstant
 		}
 		outputSet = out;
 		System.out.println("Dump In: ");
