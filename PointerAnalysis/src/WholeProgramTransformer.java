@@ -20,8 +20,8 @@ public class WholeProgramTransformer extends SceneTransformer {
 		SootClass mainClass =  Scene.v().getSootClass(MyPointerAnalysis.mainClass);
 		SootMethod sm = mainClass.getMethodByName("main");
 		UnitGraph graph = new ExceptionalUnitGraph(sm.retrieveActiveBody());
-		MyFlowAnalysis flowAnalysis = new MyFlowAnalysis(graph);
-		queries = flowAnalysis.getTotalQueries();
+		MyForwardFlow flowAnalysis = new MyForwardFlow(graph, new PointToSet(), sm.getName(), "main");
+		queries = flowAnalysis.getQueries();
 		flowAnalysis.dumpQueries(queries);
 		String answer = flowAnalysis.generateAnswer();
 		AnswerPrinter.printAnswer(answer);

@@ -1,8 +1,10 @@
+import org.jboss.util.Null;
 import org.omg.CORBA.OBJ_ADAPTER;
 import soot.*;
 import soot.jimple.*;
 import soot.options.Options;
 import soot.toolkits.graph.DominatorsFinder;
+import soot.toolkits.graph.ExceptionalUnitGraph;
 import soot.toolkits.graph.MHGDominatorsFinder;
 import soot.toolkits.graph.UnitGraph;
 import soot.toolkits.scalar.ArraySparseSet;
@@ -13,31 +15,44 @@ import java.awt.*;
 import java.util.*;
 import java.util.List;
 
-public class MyFlowAnalysis
+class MyForwardFlow extends ForwardFlowAnalysis
 {
-	TreeMap<Integer, ObjectInfo> totalQueries;
-	PointToSet outputSet;
+	// ArraySparseSet<PointToSet> emptySet = new ArraySparseSet<PointToSet>();
+	// Set<ObjectInfo> objectSet = new HashSet<ObjectInfo>();
+	PointToSet inputSet = new PointToSet();
+	PointToSet outputSet = new PointToSet();
+	PointToSet returnSet = new PointToSet();
+	UnitGraph graph;
+	Integer allocID = -1;
+	TreeMap<Integer, ObjectInfo> queries = new TreeMap<Integer, ObjectInfo>();
+	String methodName;
+	String className;
 
-	public MyFlowAnalysis(UnitGraph graph)
-	{
-
-		MyForwardFlow analysis = new MyForwardFlow(graph, new PointToSet());
-		totalQueries = analysis.getQueries();
-		// build map
-		outputSet = analysis.outputSet;
+	MyForwardFlow(UnitGraph graph, PointToSet in, String name, String cName) {
+		super(graph);
+		this.graph = graph;
+		this.methodName = name;
+		this.className = cName;
+		in.dumpPointToSet();
+		in.copy(this.inputSet);
+		doAnalysis();
 	}
 
-	PointToSet getOutputSet() {
-		return outputSet;
+	TreeMap<Integer, ObjectInfo> getQueries() {
+		return queries;
 	}
 
-	TreeMap<Integer, ObjectInfo> getTotalQueries() {
-		return totalQueries;
+	void mergeQueries(TreeMap<Integer, ObjectInfo> newQueries) {
+		// for (Map.Entry<Integer, ObjectInfo> q : newQueries.entrySet()) {
+		// 	this.queries.putAll(newQueries);
+		// }
+		this.queries.putAll(newQueries);
 	}
+
 
 	String generateAnswer() {
 		String answer = "";
-		for (Map.Entry<Integer, ObjectInfo> q : totalQueries.entrySet()) {
+		for (Map.Entry<Integer, ObjectInfo> q : queries.entrySet()) {
 			Set<ObjectInfo> resultSet = outputSet.getKey(q.getValue());
 			//TreeSet<Integer> result = anderson.getPointsToSet(q.getValue());
 			answer += q.getKey().toString() + ":";
@@ -63,30 +78,6 @@ public class MyFlowAnalysis
 			entry.getValue().dumpObjectInfo();
 		}
 	}
-}
-
-class MyForwardFlow extends ForwardFlowAnalysis
-{
-
-	//ArraySparseSet<PointToSet> emptySet = new ArraySparseSet<PointToSet>();
-	PointToSet inputSet = new PointToSet();
-	PointToSet outputSet = new PointToSet();
-	UnitGraph graph;
-	Integer allocID;
-	TreeMap<Integer, ObjectInfo> queries = new TreeMap<Integer, ObjectInfo>();
-
-	MyForwardFlow(UnitGraph graph, PointToSet inputSet) {
-		super(graph);
-		this.graph = graph;
-		inputSet.copy(inputSet);
-		doAnalysis();
-	}
-
-	TreeMap<Integer, ObjectInfo> getQueries() {
-		return queries;
-	}
-
-
 
 	public void showUnit(UnitGraph graph) {
 		Map<String, Set<String>> r;
@@ -110,160 +101,193 @@ class MyForwardFlow extends ForwardFlowAnalysis
 		return inputSet.deepClone();
 	}
 
-	/**
-	 * OUT is the same as IN plus the genSet.
-	 **/
+
+	Set<ObjectInfo> handleInvoke(InvokeExpr ie, PointToSet in) {
+		SootMethod sm = ie.getMethod();
+		if (sm.getDeclaringClass().isJavaLibraryClass()) {
+			return new HashSet<ObjectInfo>();
+		}
+		PointToSet initSet = new PointToSet();
+		in.funcCallCopy(initSet);
+
+		UnitGraph graph = new ExceptionalUnitGraph(sm.retrieveActiveBody());
+		if (ie instanceof SpecialInvokeExpr) {
+			String baseName = ((Local) ((SpecialInvokeExpr)ie).getBase()).getName();
+			System.out.println("Base name is " + baseName);
+			ObjectInfo baseObj = new ObjectInfo(0, baseName, className, methodName, 0);
+			ObjectInfo thisObj = new ObjectInfo(0, "this", className, methodName, -1);
+			initSet.insert(thisObj, in.getKey(baseObj));
+		}
+
+		List<Value> args = ie.getArgs();
+		for (int i = 0; i < args.size(); i++) {
+			Value arg = args.get(i);
+			if (arg instanceof Local) {
+				System.out.println("Arg Name is " + arg.toString());
+				ObjectInfo argObj = new ObjectInfo(0, arg.toString(), className, methodName, 0);
+				ObjectInfo formalArgObj = new ObjectInfo(0, Integer.toString(i), className, methodName, -2);
+				initSet.insert(formalArgObj, in.getKey(argObj));
+			}
+		}
+		MyForwardFlow flowAnalysis = new MyForwardFlow(graph, initSet, sm.getName(), sm.getDeclaringClass().toString());
+		Set<ObjectInfo> retSet = new HashSet<ObjectInfo>();
+		retSet = flowAnalysis.returnSet.funcRetCopy(outputSet);
+		mergeQueries(flowAnalysis.queries);
+		return retSet;
+		// TODO: Copy return value.
+	}
+
 	protected void flowThrough(Object inValue, Object unit, Object outValue) {
 		PointToSet
 				in = (PointToSet) inValue,
 				out = (PointToSet) outValue;
 		in.copy(out);
-
-
 		Unit u = (Unit) unit;
 
-		System.out.println(unit);
+		System.out.println("[" + className + ":" + methodName + "]: " + unit);
 		if (u instanceof InvokeStmt) { // TODO: 主要在这里补充，估计还需要补充200行左右
 			InvokeExpr ie = ((InvokeStmt) u).getInvokeExpr();
 			if (ie.getMethod().toString().equals("<benchmark.internal.Benchmark: void alloc(int)>")) {
 				// System.out.println("Invoke*****alloc\n");
 				allocID = ((IntConstant)ie.getArgs().get(0)).value;
-				System.out.println("allocID = " + allocID);
-			}
-			if (ie.getMethod().toString().equals("<benchmark.internal.Benchmark: void test(int,java.lang.Object)>")) {
+				//System.out.println("allocID = " + allocID);
+			} else if (ie.getMethod().toString().equals("<benchmark.internal.Benchmark: void test(int,java.lang.Object)>")) {
 				//System.out.println("Invoke*****test\n");
 				Value v = ie.getArgs().get(1);
 				int id = ((IntConstant)ie.getArgs().get(0)).value;
-				ObjectInfo o = new ObjectInfo(0, v.toString(), "default", "main");
+				ObjectInfo o = new ObjectInfo(0, v.toString(), className, methodName, 0);
 				queries.put(id, o);
-				System.out.println("test invoke" + ": " + id + "," + v.toString());
+				//System.out.println("test invoke" + ": " + id + "," + v.toString());
+			} else { // TODO: 处理函数调用。如果不是上述两种情况，则需要进入将参数拷贝给方法的形参，进入到函数内部分析
+				handleInvoke(((InvokeStmt) u).getInvokeExpr(), out);
 			}
-			// TODO: 处理函数调用。如果不是上述两种情况，则需要进入将参数拷贝给方法的形参，进入到函数内部分析
-			// TODO: 可以参照大玮哥发的代码，他们在这里写的还不错
 		}
 		if (u instanceof DefinitionStmt) {
 			DefinitionStmt dsu = (DefinitionStmt)u;
 			Value rightOp = dsu.getRightOp();
 			Value leftOp = dsu.getLeftOp();
-			ObjectInfo leftObj = new ObjectInfo(0, leftOp.toString(), "default", "main");
 
-			if (rightOp instanceof NewExpr) {
-				//System.out.println("DefinitionStmt***NewExpr\n");
-				ObjectInfo rightObj = new ObjectInfo(allocID, rightOp.toString(), "default", "main");
-				Set<ObjectInfo> newSet = new HashSet<ObjectInfo>();
-				newSet.clear();
-				newSet.add(rightObj);
-				out.insert(leftObj, newSet);
-			}
-			if (leftOp instanceof Local && rightOp instanceof Local) {
-				//System.out.println("DefinitionStmt***local_local\n");
-				ObjectInfo rightObj = new ObjectInfo(0, rightOp.toString(), "default", "main");
-				Set<ObjectInfo> rightSet = out.getKey(rightObj);
-				Set<ObjectInfo> newSet = PointToSet.deepCloneSet(rightSet);
-				out.insert(leftObj, newSet);
-				//anderson.addAssignConstraint(generateName(methodname, ((DefinitionStmt) u).getRightOp().toString()), generateName(methodname, ((DefinitionStmt) u).getLeftOp().toString()));
-				//System.out.println(((DefinitionStmt) u).getRightOp().toString());
-				//System.out.println((((DefinitionStmt) u).getLeftOp().toString()));
-			}
-			// TODO: 如果rightOP不是local而是InstanceFieldRef等，则需要考虑域敏感分析
-			if (leftOp instanceof InstanceFieldRef || rightOp instanceof InstanceFieldRef || leftOp instanceof ArrayRef || rightOp instanceof ArrayRef){
-				
-				//System.out.println("DEBUG: InstanceFieldRef/ArrayRef called");
-				//System.out.println(((DefinitionStmt) u).getRightOp().toString());
-				//System.out.println((((DefinitionStmt) u).getLeftOp().toString()));
+			Set<ObjectInfo> pointerSet = new HashSet<ObjectInfo>();
+			Set<ObjectInfo> valueSet = new HashSet<ObjectInfo>();
 
-				Set<ObjectInfo> rightSet = new HashSet<ObjectInfo>();
+			if (rightOp instanceof  NewExpr) {
+				ObjectInfo rightObj = new ObjectInfo(allocID, rightOp.toString(), className, methodName, 1);
+				valueSet.add(rightObj);
+			} else if (rightOp instanceof Local) {
+				ObjectInfo rightObj = new ObjectInfo(0, rightOp.toString(), className, methodName, 2);
+				valueSet = out.getKey(rightObj);
+			} else if (rightOp instanceof InstanceFieldRef) {
+				InstanceFieldRef instsRefOp = (InstanceFieldRef) rightOp;
+				ObjectInfo baseObj = new ObjectInfo(0, instsRefOp.getBase().toString(), className, methodName, 2);
+				Set<ObjectInfo> basePointSet = out.getKey(baseObj);
 
-				if (rightOp instanceof InstanceFieldRef){
-					InstanceFieldRef fr = (InstanceFieldRef) rightOp;
-					String baseName = ((Local) fr.getBase()).getName();
-					String fieldName = fr.getField().getName();
+				Iterator entries = basePointSet.iterator();
+				while(entries.hasNext()){
+					ObjectInfo value = (ObjectInfo)entries.next();
+					String objName = value.objectName + "." + instsRefOp.getField().toString();
+					ObjectInfo fieldObj = new ObjectInfo(value.getAllocID(), objName, value.inClassName, value.inMethodName, 2);
+					Set<ObjectInfo> fieldPointSet = out.getKey(fieldObj);
+					valueSet.addAll(PointToSet.deepCloneSet(fieldPointSet));  // Deep clone?
+				}
+			} else if (rightOp instanceof ThisRef) {
+				ObjectInfo rightObj = new ObjectInfo(0, "this", className, methodName, 0);
+				valueSet = out.getKey(rightObj);
+			} else if (rightOp instanceof ParameterRef) {
+				String rightName = Integer.toString(((ParameterRef)rightOp).getIndex());
+				ObjectInfo rightObj = new ObjectInfo(0, rightName, className, methodName, -2);
+				valueSet = out.getKey(rightObj);
+			} else if (rightOp instanceof InvokeExpr) {
+				valueSet = handleInvoke((InvokeExpr)rightOp, out);
+			} else if (rightOp instanceof ArrayRef) {
+				System.out.println("DEBUG: ArrayRef called");
 
-					// 鉴于对NewExpr的处理，这里先获得右值在当前域的对象信息，再以其更新左值的PointToSet
-					ObjectInfo rightObj = new ObjectInfo(0, baseName, "default", "main");
-					Set<ObjectInfo> basePointsTo = in.getKey(rightObj);
-
-					for (ObjectInfo pto : basePointsTo) {
-						ObjectInfo k = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
-						rightSet.add(k);
-					}
-				} else if (rightOp instanceof ArrayRef) {
-					System.out.println("DEBUG: ArrayRef called");
-
-					ArrayRef arr = (ArrayRef) rightOp;
-					String baseName = ((Local) arr.getBase()).getName();
-					String fieldName = "_";
-					if (arr.getIndex() instanceof IntConstant) {
-						fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
-					}
-
-					ObjectInfo rightObj = new ObjectInfo(0, baseName, "default", "main");
-					Set<ObjectInfo> basePointsTo = in.getKey(rightObj);
-
-					for (ObjectInfo pto: basePointsTo) {
-						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName());
-						rightSet.add(k1);
-						if (!fieldName.equals("_")) {
-							//固定位置
-							ObjectInfo k2 = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
-							rightSet.add(k2);
-						}
-					}
-				} else {
-					ObjectInfo rightObj = new ObjectInfo(0, rightOp.toString(), "default", "main");
-					Set<ObjectInfo>tmpSet = out.getKey(rightObj);
-					rightSet = PointToSet.deepCloneSet(tmpSet);
+				ArrayRef arr = (ArrayRef) rightOp;
+				String baseName = ((Local) arr.getBase()).getName();
+				String fieldName = "_";
+				if (arr.getIndex() instanceof IntConstant) {
+					fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
 				}
 
-				if (leftOp instanceof InstanceFieldRef){
-					InstanceFieldRef fr = (InstanceFieldRef) leftOp;
-					String baseName = ((Local) fr.getBase()).getName();
-					String fieldName = fr.getField().getName();
+				ObjectInfo rightObj = new ObjectInfo(0, baseName, "default", "main", 0);
+				Set<ObjectInfo> basePointsTo = in.getKey(rightObj);
 
-					ObjectInfo leftIFObj = new ObjectInfo(0, baseName, "default", "main");
-					Set<ObjectInfo> basePointsTo = in.getKey(leftIFObj);
-
-					for (ObjectInfo pto : basePointsTo) {
-						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName());
-						ObjectInfo k2 = new ObjectInfo(0, baseName, "default", "main");
-						out.append(k1, rightSet);
-						out.append(k2, rightSet);
+				for (ObjectInfo pto: basePointsTo) {
+					ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName(), 0);
+					valueSet.add(k1);
+					if (!fieldName.equals("_")) {
+						//固定位置
+						ObjectInfo k2 = new ObjectInfo(pto.getAllocID(), baseName, fieldName, pto.getInMethodName(), 0);
+						valueSet.add(k2);
 					}
-				} else if (leftOp instanceof ArrayRef) {
-					ArrayRef arr = (ArrayRef) leftOp;
-					String baseName = ((Local) arr.getBase()).getName();
-					String fieldName = "_";
-					if (arr.getIndex() instanceof IntConstant) {
-						fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
-					}
-
-					ObjectInfo leftIFObj = new ObjectInfo(0, baseName, "default", "main");
-					Set<ObjectInfo> basePointsTo = in.getKey(leftIFObj);
-
-					for (ObjectInfo pto: basePointsTo) {
-						ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName());
-						if (!fieldName.equals("_") && basePointsTo.size() == 1) {
-							out.insert(k1, rightSet);
-						} else {
-							out.append(k1, rightSet);
-						}
-
-						ObjectInfo k2 = new ObjectInfo(0, baseName, fieldName, "main");
-						out.append(k2, rightSet);
-					}
-				} else {
-					out.insert(leftObj, rightSet);
 				}
 			}
 
-			// TBD: 处理ThisRef, NullConstant
+			if (leftOp instanceof Local) {
+				ObjectInfo leftObj = new ObjectInfo(0, leftOp.toString(), className, methodName, 2);
+				pointerSet.add(leftObj);
+			} else if (leftOp instanceof InstanceFieldRef) {
+				InstanceFieldRef instsRefOp = (InstanceFieldRef) leftOp;
+				// System.out.println(instsRefOp.getField().toString() + "***" + instsRefOp.getBase().toString());
+				ObjectInfo baseObj = new ObjectInfo(0, instsRefOp.getBase().toString(), className, methodName, 2);
+				Set<ObjectInfo> basePointSet = out.getKey(baseObj);
+
+				Iterator entries = basePointSet.iterator();
+				while(entries.hasNext()) {
+					ObjectInfo value = (ObjectInfo)entries.next();
+					String objName = value.objectName + "." + instsRefOp.getField().toString();
+					ObjectInfo fieldObj = new ObjectInfo(value.getAllocID(), objName, value.inClassName, value.inMethodName, 2);
+					pointerSet.add(fieldObj);
+				}
+			} else if (leftOp instanceof ArrayRef) {
+				ArrayRef arr = (ArrayRef) leftOp;
+				String baseName = ((Local) arr.getBase()).getName();
+				String fieldName = "_";
+				if (arr.getIndex() instanceof IntConstant) {
+					fieldName = Integer.toString(((IntConstant) arr.getIndex()).value);
+				}
+
+				ObjectInfo leftIFObj = new ObjectInfo(0, baseName, "default", "main", 0);
+				Set<ObjectInfo> basePointsTo = in.getKey(leftIFObj);
+
+				for (ObjectInfo pto: basePointsTo) {
+					ObjectInfo k1 = new ObjectInfo(pto.getAllocID(), baseName, "_", pto.getInMethodName(), 0);
+					if (!fieldName.equals("_") && basePointsTo.size() == 1) {
+						out.insert(k1, valueSet);
+					} else {
+						out.append(k1, valueSet);
+					}
+
+					ObjectInfo k2 = new ObjectInfo(0, baseName, fieldName, "main", 0);
+					out.append(k2, valueSet);
+				}
+			}
+
+			Iterator entries = pointerSet.iterator();
+			while(entries.hasNext()) {
+				ObjectInfo pointer = (ObjectInfo)entries.next();
+				out.insert(pointer, valueSet);
+			}
+		} else if (u instanceof ReturnStmt) {
+			PointToSet newSet = new PointToSet();
+			returnSet.merge(out, newSet);
+			returnSet = newSet;
+			Value ret = ((ReturnStmt)u).getOp();
+			if (ret instanceof Local) {
+				ObjectInfo retObj = new ObjectInfo(0, ret.toString(), className, methodName, -3);
+				returnSet.append(retObj, out.getKey(retObj));
+			}
+		} else if (u instanceof ReturnVoidStmt) {
+			PointToSet newSet = new PointToSet();
+			returnSet.merge(out, newSet);
+			returnSet = newSet;
 		}
 		outputSet = out;
-		System.out.println("Dump In: ");
-		in.dumpPointToSet();
-		System.out.println("\nDump Out: ");
-		out.dumpPointToSet();
-
+		// System.out.println("{{{{{{{{{{{{{{{{{{{{{");
+		// System.out.println("Dump In: ");
+		// in.dumpPointToSet();
+		// System.out.println("Dump Out: ");
+		// out.dumpPointToSet();
+		// System.out.println("}}}}}}}}}}}}}}}}}}}}}");
 		// perform generation (kill set is empty)
 		// in.union(genSet, out);
 	}
@@ -297,23 +321,26 @@ class MyForwardFlow extends ForwardFlowAnalysis
 // 定义了一个类来表示信息优点是在域敏感和过程间分析的时候可能会简单一点；但是这样也有缺点，在指向集中可能会重复保存具有相同信息的对象
 // 所以保存的时候需要进行一下判断，已经写好了相关的方法。
 
- class ObjectInfo {
+class ObjectInfo {
 	int allocID ; // 0: variable in test invokestmt; >0: object
+	int type; // 2: common local 1: new obj  0:unknown -2: params -1: this
 	String objectName;
 	String inClassName;
 	String inMethodName;
-	//Set<ObjectInfo> field;
-	ObjectInfo(int id, String objectname, String inclassname, String inmethodname) {
+	Map<ObjectInfo, Set<ObjectInfo>> field;
+	ObjectInfo(int id, String objectname, String inclassname, String inmethodname, int t) {
 		allocID = id;
 		objectName = objectname;
 		inClassName = inclassname;
 		inMethodName = inmethodname;
-		//field = new HashSet<ObjectInfo>();
+		type = t;
+		field = new HashMap<ObjectInfo, Set<ObjectInfo>>();
 	}
 
 	int getAllocID() {
 		return allocID;
 	}
+	int getType() {return type;}
 
 	String getBaseClassName() {
 		return objectName;
@@ -323,26 +350,42 @@ class MyForwardFlow extends ForwardFlowAnalysis
 		return inMethodName;
 	}
 
+	Map<ObjectInfo, Set<ObjectInfo>> getField() {
+		return field;
+	}
+
 	void dumpObjectInfo() {
 		System.out.println("\tallocID: " + allocID + " object name: " + objectName
-				+ " in METHOD " + inMethodName + " of CLASS " + inClassName);
+				+ " in METHOD " + inMethodName + " of CLASS " + inClassName + " and type is " + type);
+		if (!field.isEmpty()) {
+			for (Map.Entry<ObjectInfo, Set<ObjectInfo>> e : field.entrySet()) {
+				System.out.println("Field\n");
+				e.getKey().dumpObjectInfo();
+				System.out.println("\t:\t");
+			}
+		}
 	}
 	boolean equal(ObjectInfo obj) {
 		if (obj == null) {
 			return false;
 		}
-		if (this.allocID == obj.allocID && this.objectName.equals(obj.objectName) &&
-		   obj.inClassName.equals(obj.inClassName) && this.inMethodName.equals(obj.inMethodName)) {
+		if (this.allocID == obj.allocID && this.objectName.equals(obj.objectName)) {
 			return true;
 		}
 		return false;
 	}
 
-	 ObjectInfo deepClone() {
-		 ObjectInfo newObj = new ObjectInfo(this.allocID, this.objectName, this.inClassName, this.inMethodName);
-		 return newObj;
-	 }
- }
+	ObjectInfo deepClone() {
+		ObjectInfo newObj = new ObjectInfo(this.allocID, this.objectName, this.inClassName, this.inMethodName, this.type);
+		for (Map.Entry<ObjectInfo, Set<ObjectInfo>> e : field.entrySet()) {
+			Set<ObjectInfo> newSet = new HashSet<ObjectInfo>();
+			Set<ObjectInfo> oldSet = e.getValue();
+			newSet = PointToSet.deepCloneSet(oldSet);
+			newObj.field.put(e.getKey().deepClone(), newSet);
+		}
+		return newObj;
+	}
+}
 //
 class PointToSet
 {
@@ -351,7 +394,6 @@ class PointToSet
 	PointToSet() {
 		pointSet = new HashMap<ObjectInfo, Set<ObjectInfo>>();
 		pointSet.clear();
-
 	}
 
 	Map<ObjectInfo, Set<ObjectInfo>> getPointSet() {
@@ -414,10 +456,39 @@ class PointToSet
 		pSet.pointSet = newSet.pointSet;
 	}
 
+	void funcCallCopy(PointToSet pSet) {
+		PointToSet newSet = this.deepClone();
+		for (Map.Entry<ObjectInfo, Set<ObjectInfo>> entry : this.getPointSet().entrySet()) {
+			ObjectInfo key = entry.getKey();
+			if (key.getType() >= 0) {
+				pSet.insert(key, entry.getValue());
+			}
+		}
+	}
+
+	Set<ObjectInfo> funcRetCopy(PointToSet pSet) {
+		PointToSet newSet = this.deepClone();
+		Set<ObjectInfo> retSet = new HashSet<ObjectInfo>();
+		for (Map.Entry<ObjectInfo, Set<ObjectInfo>> entry : this.getPointSet().entrySet()) {
+			ObjectInfo key = entry.getKey();
+			if (key.getType() >= 0) {
+				pSet.insert(key, entry.getValue());
+			} else if (key.getType() == -3) { // Return value.
+				retSet = entry.getValue();
+			}
+		}
+		return retSet;
+	}
+
 	void insert(ObjectInfo key, Set<ObjectInfo> value) {
 		ObjectInfo pointer = aliasKey(key);
 		pointSet.remove(pointer);
 		pointSet.put(pointer, value);
+	}
+
+	void clearKey(ObjectInfo key) {
+		ObjectInfo pointer = aliasKey(key);
+		pointSet.remove(pointer);
 	}
 
 	void append(ObjectInfo key, Set<ObjectInfo> valueSet) {
@@ -451,6 +522,25 @@ class PointToSet
 		return false;
 	}
 
+	static void setInsert(Set<ObjectInfo> valueSet, ObjectInfo value) {
+		if (!setContains(valueSet, value)) {
+			valueSet.add(value);
+		}
+	}
+
+
+	static ObjectInfo setValueAlias(Set<ObjectInfo> valueSet, ObjectInfo value) {
+		Iterator entries = valueSet.iterator();
+		while(entries.hasNext()){
+			ObjectInfo e = (ObjectInfo)entries.next();
+			if (e.equal(value)) {
+				return e;
+			}
+		}
+		valueSet.add(value);
+		return value;
+	}
+
 	void dumpPointToSet() {
 		for (ObjectInfo pointer : pointSet.keySet()) {
 			dumpKey(pointer);
@@ -458,16 +548,22 @@ class PointToSet
 	}
 
 	void dumpKey(ObjectInfo key) {
+		Set<ObjectInfo> valueSet = getKey(key);
+		if (valueSet.isEmpty()) {
+			return;
+		}
 		System.out.println("Pointer: ");
 		key.dumpObjectInfo();
-		Set<ObjectInfo> valueSet = getKey(key);
+		dumpSet(valueSet);
+		System.out.println("\n");
+	}
 
+	void dumpSet(Set<ObjectInfo> valueSet) {
 		System.out.println("Object Set: ");
 		Iterator entries = valueSet.iterator();
 		while(entries.hasNext()){
 			ObjectInfo value = (ObjectInfo)entries.next();
 			value.dumpObjectInfo();
 		}
-		System.out.println("\n");
 	}
 }

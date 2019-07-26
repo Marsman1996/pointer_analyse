@@ -7,7 +7,7 @@ import soot.toolkits.graph.DirectedGraph;
 
 public class MyPointerAnalysis {
 	static String codepath = "PointerAnalysis\\code";//"/Users/zqh/Downloads/project1/code";
-	static String classname = "test.Hello";
+	static String classname = "test.Test3";
 	public static String mainClass;
 
 
