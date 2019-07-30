@@ -21,21 +21,17 @@ public class Test3 {
     private void assign(A x, A y) {
         y.f = x.f;
     }
+    private B assign2(A x) {A y = x; return y.f;}
 
     private void test() {
 
     }
 
     public void main(String[] args) {
-
-        Benchmark.alloc(1);
+        Benchmark. alloc(1);
         B b = new B();
         Benchmark.alloc(2);
         A a = new A(b);
-        Benchmark.alloc(3);
-        A c = new A();
-        assign(a, c);
-
-        Benchmark.test(1, c.f);
+        Benchmark.test(1, a.f);
     }
 }

@@ -19,8 +19,8 @@ public class WholeProgramTransformer extends SceneTransformer {
 		TreeMap<Integer, ObjectInfo> queries = new TreeMap<Integer, ObjectInfo>();
 		SootClass mainClass =  Scene.v().getSootClass(MyPointerAnalysis.mainClass);
 		SootMethod sm = mainClass.getMethodByName("main");
-		UnitGraph graph = new ExceptionalUnitGraph(sm.retrieveActiveBody());
-		MyForwardFlow flowAnalysis = new MyForwardFlow(graph, new PointToSet(), sm.getName(), "main");
+		DirectedGraph graph = new ExceptionalUnitGraph(sm.retrieveActiveBody());
+		MyForwardFlow flowAnalysis = new MyForwardFlow(graph, new PointToSet(), sm.getName(), "main", -1, 0);
 		queries = flowAnalysis.getQueries();
 		flowAnalysis.dumpQueries(queries);
 		String answer = flowAnalysis.generateAnswer();

@@ -18,7 +18,7 @@ public class Test2 {
 
     public Test2() {}
 
-    private void assign(A x, A y) {
+    static private void assign(A x, A y) {
         y.f = x.f;
     }
 
@@ -31,12 +31,10 @@ public class Test2 {
         Benchmark.alloc(1);
         B b = new B();
         Benchmark.alloc(2);
-        A a = new A();
-        a.f = b;
+        A a = new A(b);
         Benchmark.alloc(3);
         A c = new A();
-        c = a;
-
+        assign(a, c);
         Benchmark.test(1, c.f);
     }
 

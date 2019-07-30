@@ -7,7 +7,7 @@ import soot.toolkits.graph.DirectedGraph;
 
 public class MyPointerAnalysis {
 	static String codepath = "PointerAnalysis\\code";//"/Users/zqh/Downloads/project1/code";
-	static String classname = "test.Test3";
+	static String classname = "test.Test5";
 	public static String mainClass;
 
 
@@ -24,12 +24,11 @@ public class MyPointerAnalysis {
 		//System.out.println(classpath);
 		PackManager.v().getPack("wjtp").add(new Transform("wjtp.mypta", new WholeProgramTransformer()));
 		soot.Main.main(new String[] {
-			"-w",
-			"-p", "cg.spark", "enabled:true",
-			"-p", "wjtp.mypta", "enabled:true",
-			"-soot-class-path", classpath,
+				"-w",
+				"-p", "cg.spark", "enabled:true",
+				"-p", "wjtp.mypta", "enabled:true",
+				"-soot-class-path", classpath,
 				classname//args[1]
 		});
 	}
-
 }

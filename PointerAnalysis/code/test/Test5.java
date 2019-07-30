@@ -6,7 +6,7 @@ import benchmark.internal.Benchmark;
 import benchmark.objects.A;
 import benchmark.objects.B;
 
-public class MyTest3 {
+public class Test5 {
 
     public static void main(String[] args) {
         Benchmark.alloc(1);
